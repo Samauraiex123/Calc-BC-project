@@ -5,7 +5,7 @@ import os
 os.makedirs("stl_output", exist_ok=True)
 
 # ============================================================
-# SETTINGS — match your main test.py
+# SETTINGS — must match test.py
 # ============================================================
 SCALE     = 1
 THICKNESS = 0.75 * SCALE
@@ -13,18 +13,41 @@ THICKNESS = 0.75 * SCALE
 def f(x):
     return (np.sin(x) + 1.5) * SCALE
 
-X_MIN, X_MAX = 0, 2 * np.pi * SCALE
+def inner_r(x):
+    outer = f(x)
+    return np.maximum(outer * 0.3, outer - THICKNESS)
 
-# Plate dimensions (mm — size to match the models)
-PLATE_W   = 80.0    # width  (along x)
-PLATE_H   = 30.0    # height (along y)
-PLATE_D   = 4.0     # thickness (z)
-ENGRAVE_D = 1.2     # how deep the engraved letters go (must be < PLATE_D)
-MARGIN    = 4.0     # blank border around text
+X_MIN, X_MAX = 0, 2 * np.pi * SCALE
+NX        = 200
+NT        = 200
+N_WASHERS = 14
 
 # ============================================================
-# 5x9 PIXEL FONT  (1 = solid, 0 = engraved/hole)
-# Tall grid for maximum clarity at this size
+# ENGRAVING SETTINGS
+# ============================================================
+TEXT      = "sin(x)+1.5"
+ENGRAVE_D = 0.10        # depth of engraving in model units
+COLS      = 5
+ROWS      = 9
+CGAP      = 2           # pixel gap between chars
+
+TEXT_THETA  = 0.0       # angle on tube — 0 = top
+TEXT_X_CEN  = X_MAX / 2.0
+
+# Auto-fit PIX so text fills 85% of tube length
+TEXT_W_PIX = len(TEXT) * (COLS + CGAP) - CGAP
+PIX        = (X_MAX - X_MIN) * 0.85 / TEXT_W_PIX
+
+TEXT_W = TEXT_W_PIX * PIX
+TEXT_H = ROWS * PIX
+TX0    = TEXT_X_CEN - TEXT_W / 2.0
+
+R_TEXT     = f(TEXT_X_CEN)
+DTHETA_TOT = TEXT_H / R_TEXT
+THETA0     = TEXT_THETA - DTHETA_TOT / 2.0
+
+# ============================================================
+# 5x9 BITMAP FONT  (1 = normal surface, 0 = engraved)
 # ============================================================
 FONT = {
     's': [
@@ -139,85 +162,12 @@ FONT = {
     ],
 }
 
-TEXT   = "sin(x)+1.5"
-COLS   = 5
-ROWS   = 9
-CGAP   = 2    # pixel gap between chars
-
-# pixel physical size — scale to fill plate height minus margins
-PIX    = (PLATE_H - 2 * MARGIN) / ROWS
-
-# total text width
-TEXT_W = (len(TEXT) * (COLS + CGAP) - CGAP) * PIX
-
-# auto-widen plate if text is wider than default
-if TEXT_W + 2 * MARGIN > PLATE_W:
-    PLATE_W = TEXT_W + 2 * MARGIN
-
-# horizontal centering offset
-TEXT_X0 = (PLATE_W - TEXT_W) / 2
-
 # ============================================================
-# GEOMETRY HELPERS
+# PRECOMPUTE ENGRAVED PIXEL BOUNDING BOXES
 # ============================================================
-triangles = []
-
-def tri(a, b, c):
-    triangles.append([list(a), list(b), list(c)])
-
-def quad_face(x0, y0, x1, y1, z):
-    """Single flat quad at height z (two triangles)."""
-    tri([x0,y0,z], [x1,y0,z], [x1,y1,z])
-    tri([x0,y0,z], [x1,y1,z], [x0,y1,z])
-
-def quad_face_rev(x0, y0, x1, y1, z):
-    """Reversed winding — for bottom face."""
-    tri([x0,y0,z], [x1,y1,z], [x1,y0,z])
-    tri([x0,y0,z], [x0,y1,z], [x1,y1,z])
-
-def wall_xconst(x, y0, y1, z0, z1):
-    tri([x,y0,z0], [x,y1,z1], [x,y1,z0])
-    tri([x,y0,z0], [x,y0,z1], [x,y1,z1])
-
-def wall_yconst(y, x0, x1, z0, z1):
-    tri([x0,y,z0], [x1,y,z0], [x1,y,z1])
-    tri([x0,y,z0], [x1,y,z1], [x0,y,z1])
-
-def wall_xconst_rev(x, y0, y1, z0, z1):
-    tri([x,y0,z0], [x,y1,z0], [x,y1,z1])
-    tri([x,y0,z0], [x,y1,z1], [x,y0,z1])
-
-def wall_yconst_rev(y, x0, x1, z0, z1):
-    tri([x0,y,z0], [x1,y,z1], [x1,y,z0])
-    tri([x0,y,z0], [x0,y,z1], [x1,y,z1])
-
-# ============================================================
-# BUILD PLATE + ENGRAVING
-# ============================================================
-def build_engraved_plate():
-    global triangles
-    triangles = []
-
-    Z_BOT  = 0.0
-    Z_TOP  = PLATE_D
-    Z_ENGR = PLATE_D - ENGRAVE_D   # bottom of engraved pocket
-
-    # --- bottom face ---
-    quad_face_rev(0, 0, PLATE_W, PLATE_H, Z_BOT)
-
-    # --- outer walls ---
-    wall_yconst(0,       0,       PLATE_W, Z_BOT, Z_TOP)
-    wall_yconst_rev(PLATE_H, 0,   PLATE_W, Z_BOT, Z_TOP)
-    wall_xconst(0,       0,       PLATE_H, Z_BOT, Z_TOP)
-    wall_xconst_rev(PLATE_W, 0,   PLATE_H, Z_BOT, Z_TOP)
-
-    # --- collect engraved pixel rects ---
-    engraved = []   # pixels that are engraved (grid value == 0)
-    solid_px  = []  # pixels that are raised (grid value == 1)
-
-    cx = TEXT_X0
-    cy = MARGIN
-
+def get_engraved_pixels():
+    pixels = []
+    cx = TX0
     for ch in TEXT:
         if ch not in FONT:
             cx += (COLS + CGAP) * PIX
@@ -225,61 +175,129 @@ def build_engraved_plate():
         grid = FONT[ch]
         for row in range(ROWS):
             for col in range(COLS):
-                px0 = cx + col * PIX
-                py0 = cy + (ROWS - 1 - row) * PIX
-                px1 = px0 + PIX
-                py1 = py0 + PIX
                 if grid[row][col] == 0:
-                    engraved.append((px0, py0, px1, py1))
-                else:
-                    solid_px.append((px0, py0, px1, py1))
+                    px_x0 = cx + col * PIX
+                    px_x1 = px_x0 + PIX
+                    x_mid  = (px_x0 + px_x1) / 2.0
+                    dtheta = PIX / f(x_mid)
+                    px_t0  = THETA0 + (ROWS - 1 - row) * dtheta
+                    px_t1  = px_t0 + dtheta
+                    pixels.append((px_x0, px_x1, px_t0, px_t1))
         cx += (COLS + CGAP) * PIX
+    return pixels
 
-    # --- top surface: full plate top MINUS engraved pockets ---
-    # We tile the top as solid, but for engraved pixels we drop to Z_ENGR
-    # Easiest watertight approach:
-    # 1. Top face solid everywhere that ISN'T engraved
-    # 2. Engraved pockets: floor at Z_ENGR + 4 pocket walls
-
-    # Build a set of solid top rects by splitting the top face around pockets.
-    # Simpler: just add the solid pixel tops + the background regions separately.
-
-    # background left of text
-    quad_face(0, 0, TEXT_X0, PLATE_H, Z_TOP)
-    # background right of text
-    quad_face(TEXT_X0 + TEXT_W, 0, PLATE_W, PLATE_H, Z_TOP)
-    # background below text
-    quad_face(TEXT_X0, 0, TEXT_X0 + TEXT_W, MARGIN, Z_TOP)
-    # background above text
-    quad_face(TEXT_X0, MARGIN + ROWS * PIX, TEXT_X0 + TEXT_W, PLATE_H, Z_TOP)
-
-    # gaps between characters
-    gx = TEXT_X0
-    for ch in TEXT:
-        char_end = gx + COLS * PIX
-        gap_end  = gx + (COLS + CGAP) * PIX
-        if gap_end <= TEXT_X0 + TEXT_W:
-            quad_face(char_end, MARGIN, gap_end, MARGIN + ROWS * PIX, Z_TOP)
-        gx += (COLS + CGAP) * PIX
-
-    # solid pixels — top face at Z_TOP
-    for (x0, y0, x1, y1) in solid_px:
-        quad_face(x0, y0, x1, y1, Z_TOP)
-
-    # engraved pixels — floor at Z_ENGR + pocket walls
-    for (x0, y0, x1, y1) in engraved:
-        # pocket floor
-        quad_face_rev(x0, y0, x1, y1, Z_ENGR)
-        # pocket walls (going down from Z_TOP to Z_ENGR)
-        wall_yconst_rev(y0, x0, x1, Z_ENGR, Z_TOP)
-        wall_yconst(y1,     x0, x1, Z_ENGR, Z_TOP)
-        wall_xconst_rev(x0, y0, y1, Z_ENGR, Z_TOP)
-        wall_xconst(x1,     y0, y1, Z_ENGR, Z_TOP)
-
-    return list(triangles)
+def is_engraved(x_mid, t_mid, engraved_pixels):
+    for (x0, x1, t0, t1) in engraved_pixels:
+        if x0 <= x_mid <= x1 and t0 <= t_mid <= t1:
+            return True
+    return False
 
 # ============================================================
-# SAVE HELPER
+# CONTINUOUS: outer surface with engraving
+# ============================================================
+def build_continuous_engraved_outer(engraved_pixels):
+    tris = []
+    x_arr = np.linspace(X_MIN, X_MAX, NX)
+    t_arr = np.linspace(0, 2 * np.pi, NT, endpoint=False)
+    for i in range(NT):
+        i1 = (i + 1) % NT
+        for j in range(NX - 1):
+            x_mid = (x_arr[j] + x_arr[j+1]) / 2
+            t_mid = (t_arr[i] + t_arr[i1]) / 2
+            eng   = is_engraved(x_mid, t_mid, engraved_pixels)
+            d     = ENGRAVE_D if eng else 0.0
+            r0j   = f(x_arr[j])   - d
+            r0j1  = f(x_arr[j+1]) - d
+            P00 = [x_arr[j],   r0j  * np.cos(t_arr[i]),  r0j  * np.sin(t_arr[i])]
+            P01 = [x_arr[j+1], r0j1 * np.cos(t_arr[i]),  r0j1 * np.sin(t_arr[i])]
+            P10 = [x_arr[j],   r0j  * np.cos(t_arr[i1]), r0j  * np.sin(t_arr[i1])]
+            P11 = [x_arr[j+1], r0j1 * np.cos(t_arr[i1]), r0j1 * np.sin(t_arr[i1])]
+            tris.append([P00, P01, P10])
+            tris.append([P10, P01, P11])
+    return tris
+
+def build_continuous_inner_and_caps():
+    tris = []
+    x_arr = np.linspace(X_MIN, X_MAX, NX)
+    t_arr = np.linspace(0, 2 * np.pi, NT, endpoint=False)
+
+    # inner surface
+    for i in range(NT):
+        i1 = (i + 1) % NT
+        for j in range(NX - 1):
+            ri_j  = inner_r(x_arr[j])
+            ri_j1 = inner_r(x_arr[j+1])
+            P00 = [x_arr[j],   ri_j  * np.cos(t_arr[i]),  ri_j  * np.sin(t_arr[i])]
+            P01 = [x_arr[j+1], ri_j1 * np.cos(t_arr[i]),  ri_j1 * np.sin(t_arr[i])]
+            P10 = [x_arr[j],   ri_j  * np.cos(t_arr[i1]), ri_j  * np.sin(t_arr[i1])]
+            P11 = [x_arr[j+1], ri_j1 * np.cos(t_arr[i1]), ri_j1 * np.sin(t_arr[i1])]
+            tris.append([P00, P10, P01])
+            tris.append([P10, P11, P01])
+
+    # end caps
+    t_cap = np.linspace(0, 2 * np.pi, NT, endpoint=False)
+    for x_val, sign in [(X_MIN, -1), (X_MAX, 1)]:
+        ro = f(x_val)
+        ri = inner_r(x_val)
+        n_rings = 8
+        for ring in range(n_rings):
+            r0 = ri + (ro - ri) * ring / n_rings
+            r1 = ri + (ro - ri) * (ring + 1) / n_rings
+            for i in range(NT):
+                i1 = (i + 1) % NT
+                A = [x_val, r0*np.cos(t_cap[i]),  r0*np.sin(t_cap[i])]
+                B = [x_val, r1*np.cos(t_cap[i]),  r1*np.sin(t_cap[i])]
+                C = [x_val, r1*np.cos(t_cap[i1]), r1*np.sin(t_cap[i1])]
+                D = [x_val, r0*np.cos(t_cap[i1]), r0*np.sin(t_cap[i1])]
+                if sign == -1:
+                    tris.extend([[A,C,B],[A,D,C]])
+                else:
+                    tris.extend([[A,B,C],[A,C,D]])
+    return tris
+
+# ============================================================
+# DISCRETE: outer barrels with engraving
+# ============================================================
+def build_discrete_engraved(engraved_pixels):
+    tris = []
+    x_vals = np.linspace(X_MIN, X_MAX, N_WASHERS + 1)
+    t_arr  = np.linspace(0, 2 * np.pi, NT, endpoint=False)
+
+    for k in range(N_WASHERS):
+        x0, x1  = x_vals[k], x_vals[k + 1]
+        Ro_base  = f(x0)
+        Ri       = max(Ro_base * 0.3, Ro_base - THICKNESS)
+        x_mid    = (x0 + x1) / 2
+
+        for i in range(NT):
+            i1    = (i + 1) % NT
+            t_mid = (t_arr[i] + t_arr[i1]) / 2
+            eng   = is_engraved(x_mid, t_mid, engraved_pixels)
+            Ro    = Ro_base - (ENGRAVE_D if eng else 0.0)
+
+            co,  si  = np.cos(t_arr[i]),  np.sin(t_arr[i])
+            co1, si1 = np.cos(t_arr[i1]), np.sin(t_arr[i1])
+
+            tris += [
+                [[x0,Ro*co,Ro*si],[x0,Ro*co1,Ro*si1],[x1,Ro*co, Ro*si ]],
+                [[x1,Ro*co,Ro*si],[x0,Ro*co1,Ro*si1],[x1,Ro*co1,Ro*si1]],
+            ]
+            tris += [
+                [[x0,Ri*co,Ri*si],[x1,Ri*co, Ri*si ],[x0,Ri*co1,Ri*si1]],
+                [[x1,Ri*co,Ri*si],[x1,Ri*co1,Ri*si1],[x0,Ri*co1,Ri*si1]],
+            ]
+            tris += [
+                [[x0,Ro*co,Ro*si],[x0,Ri*co1,Ri*si1],[x0,Ro*co1,Ro*si1]],
+                [[x0,Ro*co,Ro*si],[x0,Ri*co, Ri*si ],[x0,Ri*co1,Ri*si1]],
+            ]
+            tris += [
+                [[x1,Ro*co,Ro*si],[x1,Ro*co1,Ro*si1],[x1,Ri*co1,Ri*si1]],
+                [[x1,Ro*co,Ro*si],[x1,Ri*co1,Ri*si1],[x1,Ri*co, Ri*si ]],
+            ]
+    return tris
+
+# ============================================================
+# SAVE
 # ============================================================
 def save_stl(tris, filename):
     arr = np.array(tris)
@@ -290,15 +308,20 @@ def save_stl(tris, filename):
     print(f"Saved: {filename}  ({len(arr)} triangles)")
 
 # ============================================================
-# GENERATE BOTH FILES
+# GENERATE
 # ============================================================
-tris = build_engraved_plate()
-save_stl(tris, "stl_output/continuous_engraving.stl")
+engraved_pixels = get_engraved_pixels()
 
-tris = build_engraved_plate()   # identical label for both
-save_stl(tris, "stl_output/discrete_engraving.stl")
-
-print(f"\nPlate dimensions: {PLATE_W:.1f} x {PLATE_H:.1f} x {PLATE_D:.1f} mm")
-print(f"Engraving depth : {ENGRAVE_D:.1f} mm")
-print(f"Pixel size      : {PIX:.2f} mm")
 print(f"Text            : {TEXT}")
+print(f"Pixel size      : {PIX:.4f} units")
+print(f"Text x range    : {TX0:.3f} to {TX0+TEXT_W:.3f}  (tube: {X_MIN:.3f} to {X_MAX:.3f})")
+print(f"Text theta range: {THETA0:.3f} to {THETA0+DTHETA_TOT:.3f} rad ({np.degrees(DTHETA_TOT):.1f} deg)")
+print(f"Engraved pixels : {len(engraved_pixels)}")
+print(f"Engraving depth : {ENGRAVE_D} units")
+
+cont_tris = build_continuous_engraved_outer(engraved_pixels)
+cont_tris += build_continuous_inner_and_caps()
+save_stl(cont_tris, "stl_output/continuous_engraving.stl")
+
+disc_tris = build_discrete_engraved(engraved_pixels)
+save_stl(disc_tris, "stl_output/discrete_engraving.stl")
