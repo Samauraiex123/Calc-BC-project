@@ -29,7 +29,8 @@ N_WASHERS = 14
 # ============================================================
 # ENGRAVING SETTINGS
 # ============================================================
-TEXT = "sin(x)+1.5"
+TEXT_OUTER = "sin(x)+1.5"
+TEXT_INNER = "max(0.3f,f-0.75)" # 'f' refers to the outer function
 
 # deeper engraving for clearer shadows
 ENGRAVE_D = 0.18
@@ -38,29 +39,7 @@ COLS = 5
 ROWS = 9
 CGAP = 2
 
-# 0 = top of tube
-TEXT_THETA = 0.0
-
 TEXT_X_CEN = X_MAX / 2.0
-
-# ============================================================
-# AUTO SCALE TEXT
-# ============================================================
-TEXT_W_PIX = len(TEXT) * (COLS + CGAP) - CGAP
-
-# fill 85% of tube length
-PIX = (X_MAX - X_MIN) * 0.85 / TEXT_W_PIX
-
-TEXT_W = TEXT_W_PIX * PIX
-TEXT_H = ROWS * PIX
-
-TX0 = TEXT_X_CEN - TEXT_W / 2.0
-
-R_TEXT = f(TEXT_X_CEN)
-
-DTHETA_TOT = TEXT_H / R_TEXT
-
-THETA0 = TEXT_THETA - DTHETA_TOT / 2.0
 
 # ============================================================
 # 5x9 FONT
@@ -77,19 +56,46 @@ FONT = {
     '1': [[0,0,1,0,0],[0,1,1,0,0],[1,0,1,0,0],[0,0,1,0,0],[0,0,1,0,0],[0,0,1,0,0],[0,0,1,0,0],[1,1,1,1,1],[0,0,0,0,0]],
     '.': [[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,1,1,0,0],[0,1,1,0,0],[0,0,0,0,0]],
     '5': [[1,1,1,1,1],[1,0,0,0,0],[1,0,0,0,0],[1,1,1,1,0],[0,0,0,0,1],[0,0,0,0,1],[1,0,0,0,1],[0,1,1,1,0],[0,0,0,0,0]],
+    
+    # New characters for the inner function text
+    'm': [[1,0,0,0,1],[1,1,0,1,1],[1,0,1,0,1],[1,0,0,0,1],[1,0,0,0,1],[1,0,0,0,1],[1,0,0,0,1],[1,0,0,0,1],[0,0,0,0,0]],
+    'a': [[0,1,1,1,0],[1,0,0,0,1],[1,0,0,0,1],[1,1,1,1,1],[1,0,0,0,1],[1,0,0,0,1],[1,0,0,0,1],[1,0,0,0,1],[0,0,0,0,0]],
+    '0': [[0,1,1,1,0],[1,0,0,0,1],[1,0,0,1,1],[1,0,1,0,1],[1,1,0,0,1],[1,0,0,0,1],[1,0,0,0,1],[0,1,1,1,0],[0,0,0,0,0]],
+    '3': [[1,1,1,1,0],[0,0,0,0,1],[0,0,0,0,1],[0,0,1,1,0],[0,0,0,0,1],[0,0,0,0,1],[0,0,0,0,1],[1,1,1,1,0],[0,0,0,0,0]],
+    'f': [[0,0,1,1,1],[0,1,0,0,0],[0,1,0,0,0],[1,1,1,1,0],[0,1,0,0,0],[0,1,0,0,0],[0,1,0,0,0],[0,1,0,0,0],[0,0,0,0,0]],
+    ',': [[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,1,1,0],[0,0,1,0,0],[0,1,0,0,0]],
+    '-': [[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[1,1,1,1,1],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0]],
+    '7': [[1,1,1,1,1],[0,0,0,0,1],[0,0,0,0,1],[0,0,0,1,0],[0,0,1,0,0],[0,1,0,0,0],[1,0,0,0,0],[1,0,0,0,0],[0,0,0,0,0]],
 }
+
+# ============================================================
+# AUTO SCALE TEXT
+# ============================================================
+def get_text_w_pix(text):
+    return len(text) * (COLS + CGAP) - CGAP
+
+# Scale based on the longest string so they both fit on the tube
+MAX_W_PIX = max(get_text_w_pix(TEXT_OUTER), get_text_w_pix(TEXT_INNER))
+PIX = (X_MAX - X_MIN) * 0.85 / MAX_W_PIX
+R_TEXT = f(TEXT_X_CEN)
 
 # ============================================================
 # PRECOMPUTE ENGRAVED PIXELS
 # ============================================================
-def get_engraved_pixels():
+def get_engraved_pixels_for_text(text, theta_center):
     pixels = []
     
-    # FIX: Start at the maximum X boundary so text renders left-to-right visually.
-    # Looking from the outside, +X goes to the left, so we must map backwards.
-    cx = TEXT_X_CEN + TEXT_W / 2.0 
+    text_w_pix = get_text_w_pix(text)
+    text_w = text_w_pix * PIX
+    text_h = ROWS * PIX
+    
+    # Start at the maximum X boundary for this string's width to read left-to-right
+    cx = TEXT_X_CEN + text_w / 2.0 
+    
+    dtheta_tot = text_h / R_TEXT
+    theta0 = theta_center - dtheta_tot / 2.0
 
-    for ch in TEXT:
+    for ch in text:
         if ch not in FONT:
             cx -= (COLS + CGAP) * PIX
             continue
@@ -98,12 +104,11 @@ def get_engraved_pixels():
         for row in range(ROWS):
             for col in range(COLS):
                 if grid[row][col] == 1:
-                    # Map pixels going backwards in X to mirror text correctly
                     px_x1 = cx - col * PIX
                     px_x0 = px_x1 - PIX
                     
                     dtheta = PIX / R_TEXT
-                    px_t0 = THETA0 + (ROWS - 1 - row) * dtheta
+                    px_t0 = theta0 + (ROWS - 1 - row) * dtheta
                     px_t1 = px_t0 + dtheta
                     
                     pixels.append((px_x0, px_x1, px_t0, px_t1))
@@ -111,6 +116,12 @@ def get_engraved_pixels():
         cx -= (COLS + CGAP) * PIX
 
     return pixels
+
+def get_engraved_pixels():
+    # Engrave outer function on front (0 radians) and inner function on back (pi radians)
+    pixels_front = get_engraved_pixels_for_text(TEXT_OUTER, 0.0)
+    pixels_back = get_engraved_pixels_for_text(TEXT_INNER, np.pi)
+    return pixels_front + pixels_back
 
 def is_engraved(x_mid, t_mid, engraved_pixels):
     for (x0, x1, t0, t1) in engraved_pixels:
@@ -192,14 +203,13 @@ def build_continuous_inner_and_caps():
     return tris
 
 # ============================================================
-# DISCRETE MODEL (Fixed to support high-res text mapping)
+# DISCRETE MODEL
 # ============================================================
 def build_discrete_engraved(engraved_pixels):
     tris = []
     x_vals = np.linspace(X_MIN, X_MAX, N_WASHERS + 1)
     t_arr = np.linspace(0, 2*np.pi, NT, endpoint=False)
 
-    # Subdivide each washer horizontally to give it enough resolution to hold the text
     M = max(2, NX // N_WASHERS) 
 
     for k in range(N_WASHERS):
@@ -210,7 +220,6 @@ def build_discrete_engraved(engraved_pixels):
 
         x_sub = np.linspace(x0, x1, M)
 
-        # 1. Subdivided Outer Surface (for text)
         R_outer = np.zeros((NT, M))
         for i in range(NT):
             for m in range(M):
@@ -233,7 +242,6 @@ def build_discrete_engraved(engraved_pixels):
 
                 tris += [[P00, P10, P01], [P10, P11, P01]]
 
-        # 2. Inner Surface (no subdivision needed, just one big quad per face)
         for i in range(NT):
             i1 = (i + 1) % NT
             co = np.cos(t_arr[i]);  si = np.sin(t_arr[i])
@@ -246,19 +254,16 @@ def build_discrete_engraved(engraved_pixels):
             
             tris += [[P00_i, P01_i, P10_i], [P10_i, P01_i, P11_i]]
 
-        # 3. Side Walls of the Washers
         for i in range(NT):
             i1 = (i + 1) % NT
             co = np.cos(t_arr[i]);  si = np.sin(t_arr[i])
             co1= np.cos(t_arr[i1]); si1= np.sin(t_arr[i1])
 
-            # Left Cap
             rL0 = R_outer[i, 0]; rL1 = R_outer[i1, 0]
             A = [x0, rL0*co, rL0*si]; B = [x0, rL1*co1, rL1*si1]
             C_in = [x0, Ri*co1, Ri*si1]; D_in = [x0, Ri*co, Ri*si]
             tris += [[A, D_in, B], [B, D_in, C_in]]
 
-            # Right Cap
             rR0 = R_outer[i, -1]; rR1 = R_outer[i1, -1]
             A2 = [x1, rR0*co, rR0*si]; B2 = [x1, rR1*co1, rR1*si1]
             C2_in = [x1, Ri*co1, Ri*si1]; D2_in = [x1, Ri*co, Ri*si]
@@ -286,10 +291,9 @@ engraved_pixels = get_engraved_pixels()
 print("\n================================================")
 print("ENGRAVING INFO")
 print("================================================")
-print(f"Text              : {TEXT}")
+print(f"Front Text        : {TEXT_OUTER}")
+print(f"Back Text         : {TEXT_INNER}")
 print(f"Pixel size        : {PIX:.4f}")
-print(f"Text width        : {TEXT_W:.4f}")
-print(f"Text height       : {TEXT_H:.4f}")
 print(f"Engraving depth   : {ENGRAVE_D}")
 print(f"Engraved pixels   : {len(engraved_pixels)}")
 print("================================================\n")
