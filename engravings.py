@@ -13,8 +13,8 @@ def f(x):
     return (np.sin(x) + 1.5) * SCALE
 
 def inner_r(x):
-    # Simply subtract 0.4 from the outer function
-    return f(x) - 0.4
+    # Inner function used ONLY for the continuous model
+    return f(x) - 0.3
 
 X_MIN, X_MAX = 0, 2 * np.pi * SCALE
 
@@ -28,7 +28,7 @@ N_WASHERS = 14
 # ENGRAVING SETTINGS
 # ============================================================
 TEXT_OUTER = "sin(x)+1.5"
-TEXT_INNER = "f-0.4" # Updated to reflect the new inner function
+TEXT_INNER = "f-0.3"
 
 # deeper engraving for clearer shadows
 ENGRAVE_D = 0.18
@@ -53,7 +53,7 @@ FONT = {
     '+': [[0,0,0,0,0],[0,0,1,0,0],[0,0,1,0,0],[1,1,1,1,1],[1,1,1,1,1],[0,0,1,0,0],[0,0,1,0,0],[0,0,0,0,0],[0,0,0,0,0]],
     '0': [[0,1,1,1,0],[1,0,0,0,1],[1,0,0,1,1],[1,0,1,0,1],[1,1,0,0,1],[1,0,0,0,1],[1,0,0,0,1],[0,1,1,1,0],[0,0,0,0,0]],
     '1': [[0,0,1,0,0],[0,1,1,0,0],[1,0,1,0,0],[0,0,1,0,0],[0,0,1,0,0],[0,0,1,0,0],[0,0,1,0,0],[1,1,1,1,1],[0,0,0,0,0]],
-    '4': [[0,0,0,1,0],[0,0,1,1,0],[0,1,0,1,0],[1,0,0,1,0],[1,1,1,1,1],[0,0,0,1,0],[0,0,0,1,0],[0,0,0,1,0],[0,0,0,0,0]],
+    '3': [[1,1,1,1,0],[0,0,0,0,1],[0,0,0,0,1],[0,0,1,1,0],[0,0,0,0,1],[0,0,0,0,1],[0,0,0,0,1],[1,1,1,1,0],[0,0,0,0,0]],
     '5': [[1,1,1,1,1],[1,0,0,0,0],[1,0,0,0,0],[1,1,1,1,0],[0,0,0,0,1],[0,0,0,0,1],[1,0,0,0,1],[0,1,1,1,0],[0,0,0,0,0]],
     '.': [[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,1,1,0,0],[0,1,1,0,0],[0,0,0,0,0]],
     'f': [[0,0,1,1,1],[0,1,0,0,0],[0,1,0,0,0],[1,1,1,1,0],[0,1,0,0,0],[0,1,0,0,0],[0,1,0,0,0],[0,1,0,0,0],[0,0,0,0,0]],
@@ -108,12 +108,6 @@ def get_engraved_pixels_for_text(text, theta_center):
         cx -= (COLS + CGAP) * PIX
 
     return pixels
-
-def get_engraved_pixels():
-    # Engrave outer function on front (0 radians) and inner function on back (pi radians)
-    pixels_front = get_engraved_pixels_for_text(TEXT_OUTER, 0.0)
-    pixels_back = get_engraved_pixels_for_text(TEXT_INNER, np.pi)
-    return pixels_front + pixels_back
 
 def is_engraved(x_mid, t_mid, engraved_pixels):
     for (x0, x1, t0, t1) in engraved_pixels:
@@ -195,7 +189,7 @@ def build_continuous_inner_and_caps():
     return tris
 
 # ============================================================
-# DISCRETE MODEL
+# DISCRETE MODEL (Solid Volume, No Inner Function)
 # ============================================================
 def build_discrete_engraved(engraved_pixels):
     tris = []
@@ -208,9 +202,6 @@ def build_discrete_engraved(engraved_pixels):
         x0 = x_vals[k]
         x1 = x_vals[k+1]
         Ro_base = f(x0)
-        
-        # Updated to match the continuous inner_r logic
-        Ri = Ro_base - 0.4
 
         x_sub = np.linspace(x0, x1, M)
 
@@ -220,6 +211,7 @@ def build_discrete_engraved(engraved_pixels):
                 eng = is_engraved(x_sub[m], t_arr[i], engraved_pixels)
                 R_outer[i, m] = Ro_base - (ENGRAVE_D if eng else 0.0)
 
+        # Outer Shell
         for m in range(M - 1):
             for i in range(NT):
                 i1 = (i + 1) % NT
@@ -236,32 +228,25 @@ def build_discrete_engraved(engraved_pixels):
 
                 tris += [[P00, P10, P01], [P10, P11, P01]]
 
-        for i in range(NT):
-            i1 = (i + 1) % NT
-            co = np.cos(t_arr[i]);  si = np.sin(t_arr[i])
-            co1= np.cos(t_arr[i1]); si1= np.sin(t_arr[i1])
-            
-            P00_i = [x0, Ri*co, Ri*si]
-            P10_i = [x0, Ri*co1, Ri*si1]
-            P01_i = [x1, Ri*co, Ri*si]
-            P11_i = [x1, Ri*co1, Ri*si1]
-            
-            tris += [[P00_i, P01_i, P10_i], [P10_i, P01_i, P11_i]]
-
+        # End Caps (Solid to the center axis)
         for i in range(NT):
             i1 = (i + 1) % NT
             co = np.cos(t_arr[i]);  si = np.sin(t_arr[i])
             co1= np.cos(t_arr[i1]); si1= np.sin(t_arr[i1])
 
+            # Left solid cap
             rL0 = R_outer[i, 0]; rL1 = R_outer[i1, 0]
-            A = [x0, rL0*co, rL0*si]; B = [x0, rL1*co1, rL1*si1]
-            C_in = [x0, Ri*co1, Ri*si1]; D_in = [x0, Ri*co, Ri*si]
-            tris += [[A, D_in, B], [B, D_in, C_in]]
+            A = [x0, rL0*co, rL0*si]
+            B = [x0, rL1*co1, rL1*si1]
+            Center_L = [x0, 0, 0]
+            tris.append([A, Center_L, B])
 
+            # Right solid cap
             rR0 = R_outer[i, -1]; rR1 = R_outer[i1, -1]
-            A2 = [x1, rR0*co, rR0*si]; B2 = [x1, rR1*co1, rR1*si1]
-            C2_in = [x1, Ri*co1, Ri*si1]; D2_in = [x1, Ri*co, Ri*si]
-            tris += [[A2, B2, D2_in], [B2, C2_in, D2_in]]
+            A2 = [x1, rR0*co, rR0*si]
+            B2 = [x1, rR1*co1, rR1*si1]
+            Center_R = [x1, 0, 0]
+            tris.append([A2, B2, Center_R])
 
     return tris
 
@@ -280,7 +265,9 @@ def save_stl(tris, filename):
 # ============================================================
 # GENERATE
 # ============================================================
-engraved_pixels = get_engraved_pixels()
+# Grab pixels independently so we can route them properly
+pixels_front = get_engraved_pixels_for_text(TEXT_OUTER, 0.0)
+pixels_back = get_engraved_pixels_for_text(TEXT_INNER, np.pi)
 
 print("\n================================================")
 print("ENGRAVING INFO")
@@ -289,17 +276,17 @@ print(f"Front Text        : {TEXT_OUTER}")
 print(f"Back Text         : {TEXT_INNER}")
 print(f"Pixel size        : {PIX:.4f}")
 print(f"Engraving depth   : {ENGRAVE_D}")
-print(f"Engraved pixels   : {len(engraved_pixels)}")
+print(f"Total engraved px : {len(pixels_front) + len(pixels_back)}")
 print("================================================\n")
 
-# CONTINUOUS
-cont_tris = build_continuous_engraved_outer(engraved_pixels)
+# CONTINUOUS (gets both sets of pixels and inner logic)
+cont_tris = build_continuous_engraved_outer(pixels_front + pixels_back)
 cont_tris += build_continuous_inner_and_caps()
 
 save_stl(cont_tris, "stl_output/continuous_engraving.stl")
 
-# DISCRETE
-disc_tris = build_discrete_engraved(engraved_pixels)
+# DISCRETE (solid volume, no inner tube, front text only)
+disc_tris = build_discrete_engraved(pixels_front)
 
 save_stl(disc_tris, "stl_output/discrete_engraving.stl")
 
